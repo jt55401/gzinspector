@@ -15,7 +15,7 @@ struct ChunkInfo {
     uncompressed_size: u64,
     compression_ratio: f64,
     header_info: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     preview_data: Option<Vec<u8>>,
 }
 
@@ -163,11 +163,6 @@ fn inspect_file(file_path: &str, output_format: &str, preview: Option<&str>, enc
     let mut total_uncompressed_size = 0;
     let preview_settings = PreviewSettings::parse(preview);
 
-    // Start JSON array if needed
-    if output_format == "json" {
-        println!("[");
-    }
-
     loop {
         let chunk_info = match read_chunk(&mut reader, offset, chunk_number) {
             Ok(info) => info,
@@ -177,8 +172,7 @@ fn inspect_file(file_path: &str, output_format: &str, preview: Option<&str>, enc
 
         // Print chunk immediately
         if output_format == "json" {
-            print!("  {}", serde_json::to_string(&chunk_info)?);
-            if chunk_number > 0 { print!(","); }
+            print!("{}", serde_json::to_string(&chunk_info)?);
             println!();
         } else {
             println!("{}", chunk_info);
@@ -197,11 +191,6 @@ fn inspect_file(file_path: &str, output_format: &str, preview: Option<&str>, enc
         chunk_number += 1;
     }
 
-    // Close JSON array if needed
-    if output_format == "json" {
-        println!("]");
-    }
-
     let summary = FileSummary {
         total_chunks: chunk_number,
         total_compressed_size,
@@ -211,7 +200,7 @@ fn inspect_file(file_path: &str, output_format: &str, preview: Option<&str>, enc
 
     // Print summary
     if output_format == "json" {
-        println!("{}", serde_json::to_string_pretty(&summary)?);
+        println!("{}", serde_json::to_string(&summary)?);
     } else {
         println!("{}", summary);
     }
