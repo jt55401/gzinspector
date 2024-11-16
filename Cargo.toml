@@ -1,8 +1,9 @@
 [package]
 name = "gzinspector"
 authors = ["Jason Grey <jason@jason-grey.com>"]
-edition = "2018"
+edition = "2021"
 version = "0.1.0"
+repository = "https://github.com/jt55401/gzinspector"
 
 [dependencies]
 flate2 = "1.0"
