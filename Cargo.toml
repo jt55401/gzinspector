@@ -1,6 +1,6 @@
 [package]
 name = "gz_inspector"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Jason Grey <jason@jason-grey.com>"]
 description = "A tool to inspect gzip/zlib compressed files"
