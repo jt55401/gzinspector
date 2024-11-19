@@ -1,15 +1,15 @@
 [package]
-name = "gzinspector"
-authors = ["Jason Grey <jason@jason-grey.com>"]
-edition = "2021"
+name = "gz_inspector"
 version = "0.1.0"
-repository = "https://github.com/jt55401/gzinspector"
+edition = "2021"
+authors = ["Jason Grey <jason@jason-grey.com>"]
+description = "A tool to inspect gzip/zlib compressed files"
+license = "MIT"
 
 [dependencies]
+clap = "4.0"
 flate2 = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-clap = { version = "4.0", features = ["derive"] }
 chrono = "0.4"
-crc32fast = "1.3"
 indicatif = "0.17"
