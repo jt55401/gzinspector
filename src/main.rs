@@ -6,8 +6,9 @@ use std::convert::TryInto;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::fmt;
 use chrono::DateTime;
+use indicatif::{ProgressBar, ProgressStyle};
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 struct ChunkInfo {
     chunk_number: usize,
     offset: u64,
@@ -115,6 +116,83 @@ impl PreviewSettings {
     }
 }
 
+struct ChunkFilterSettings {
+    head_chunks: usize,
+    tail_chunks: Option<usize>,
+}
+
+impl ChunkFilterSettings {
+    fn parse(filter_arg: Option<&str>) -> Option<Self> {
+        filter_arg.map(|p| {
+            let parts: Vec<&str> = p.split(':').collect();
+            let head = parts[0].parse().unwrap_or(5);
+            let tail = parts.get(1).and_then(|s| s.parse().ok());
+            ChunkFilterSettings {
+                head_chunks: head,
+                tail_chunks: tail,
+            }
+        })
+    }
+
+    fn should_print_chunk(&self, chunk_num: usize, total_chunks: usize) -> bool {
+        if chunk_num < self.head_chunks {
+            return true;
+        }
+        if let Some(tail) = self.tail_chunks {
+            if chunk_num >= total_chunks.saturating_sub(tail) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+struct TailBuffer {
+    chunks: Vec<ChunkInfo>,
+    capacity: usize,
+    total_seen: usize,
+}
+
+impl TailBuffer {
+    fn new(capacity: usize) -> Self {
+        Self {
+            chunks: Vec::with_capacity(capacity),
+            capacity,
+            total_seen: 0,
+        }
+    }
+
+    fn add(&mut self, chunk: ChunkInfo) {
+        self.total_seen += 1;
+        if self.chunks.len() < self.capacity {
+            self.chunks.push(chunk);
+        } else {
+            let idx = self.total_seen % self.capacity;
+            if let Some(slot) = self.chunks.get_mut(idx) {
+                *slot = chunk;
+            }
+        }
+    }
+
+    fn should_buffer(&self, chunk_num: usize) -> bool {
+        chunk_num >= self.total_seen.saturating_sub(self.capacity)
+    }
+
+    fn get_buffered(&self) -> Vec<&ChunkInfo> {
+        if self.total_seen <= self.capacity {
+            self.chunks.iter().collect()
+        } else {
+            let start_idx = self.total_seen % self.capacity;
+            let mut result = Vec::with_capacity(self.capacity);
+            // First add the chunks from start_idx to end (older chunks)
+            result.extend(&self.chunks[start_idx..]);
+            // Then add the chunks from beginning to start_idx (newer chunks)
+            result.extend(&self.chunks[..start_idx]);
+            result
+        }
+    }
+}
+
 fn main() {
     let matches = Command::new("gz_inspector")
         .version("1.0")
@@ -141,46 +219,97 @@ fn main() {
             .help("Encoding for preview (default: utf-8)")
             .value_parser(value_parser!(String))
             .default_value("utf-8"))
+        .arg(Arg::new("chunks")
+            .short('c')
+            .long("chunks")
+            .help("Filter chunks to display (format: HEAD:TAIL, e.g. '5:3' shows first 5 and last 3 chunks)")
+            .value_parser(value_parser!(String)))
         .get_matches();
 
     let file_path = matches.get_one::<String>("file").unwrap();
     let output_format = matches.get_one::<String>("output_format").unwrap();
     let preview = matches.get_one::<String>("preview");
     let encoding = matches.get_one::<String>("encoding").unwrap();
+    let chunks = matches.get_one::<String>("chunks");
 
-    match inspect_file(file_path, output_format, preview.map(|s| s.as_str()), encoding) {
+    match inspect_file(file_path, output_format, preview.map(|s| s.as_str()), encoding, chunks.map(|s| s.as_str())) {
         Ok(_) => (),
         Err(e) => eprintln!("Error: {}", e),
     }
 }
 
-fn inspect_file(file_path: &str, output_format: &str, preview: Option<&str>, encoding: &str) -> io::Result<()> {
+fn inspect_file(
+    file_path: &str, 
+    output_format: &str, 
+    preview: Option<&str>, 
+    encoding: &str,
+    chunks: Option<&str>
+) -> io::Result<()> {
     let file = File::open(file_path)?;
+    let file_size = file.metadata()?.len();
     let mut reader = BufReader::new(file);
+    
+    // Create progress bar on stderr
+    let progress = ProgressBar::new(file_size).with_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+            .unwrap()
+            .progress_chars("#>-")
+    );
+    progress.set_draw_target(indicatif::ProgressDrawTarget::stderr());
+
     let mut offset = 0;
     let mut chunk_number = 0;
     let mut total_compressed_size = 0;
     let mut total_uncompressed_size = 0;
     let preview_settings = PreviewSettings::parse(preview);
+    let chunk_filter = ChunkFilterSettings::parse(chunks);
+
+    // Initialize tail buffer if needed
+    let mut tail_buffer = chunk_filter.as_ref()
+        .and_then(|f| f.tail_chunks)
+        .map(|tail| TailBuffer::new(tail));
 
     loop {
         let chunk_info = match read_chunk(&mut reader, offset, chunk_number) {
             Ok(info) => info,
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-            Err(e) => return Err(e),
+            Err(e) => {
+                progress.finish_and_clear();
+                return Err(e);
+            }
         };
 
-        // Print chunk immediately
-        if output_format == "json" {
-            print!("{}", serde_json::to_string(&chunk_info)?);
-            println!();
-        } else {
-            println!("{}", chunk_info);
-            
-            // Show preview if enabled
-            if let Some(settings) = &preview_settings {
-                if let Some(data) = &chunk_info.preview_data {
-                    print_preview(data, settings, encoding);
+        // Update progress
+        progress.set_position(offset);
+
+        let should_print = chunk_filter.as_ref()
+            .map(|f| {
+                if chunk_number < f.head_chunks {
+                    true
+                } else if let Some(ref mut buffer) = tail_buffer {
+                    if buffer.should_buffer(chunk_number) {
+                        buffer.add(chunk_info.clone());
+                        false
+                    } else {
+                        false
+                    }
+                } else {
+                    true
+                }
+            })
+            .unwrap_or(true);
+
+        if should_print {
+            if output_format == "json" {
+                print!("{}", serde_json::to_string(&chunk_info)?);
+                println!();
+            } else {
+                println!("{}", chunk_info);
+                if let Some(settings) = &preview_settings {
+                    if let Some(data) = &chunk_info.preview_data {
+                        print_preview(data, settings, encoding);
+                    }
                 }
             }
         }
@@ -191,6 +320,32 @@ fn inspect_file(file_path: &str, output_format: &str, preview: Option<&str>, enc
         chunk_number += 1;
     }
 
+    // Finish and clear progress bar
+    progress.finish_and_clear();
+
+    // Print buffered tail chunks
+    if let Some(buffer) = tail_buffer {
+        if chunk_number > buffer.capacity {
+            if output_format == "human" {
+                println!("          ...");
+            }
+        }
+        for chunk in buffer.get_buffered() {
+            if output_format == "json" {
+                print!("{}", serde_json::to_string(chunk)?);
+                println!();
+            } else {
+                println!("{}", chunk);
+                if let Some(settings) = &preview_settings {
+                    if let Some(data) = &chunk.preview_data {
+                        print_preview(data, settings, encoding);
+                    }
+                }
+            }
+        }
+    }
+
+    // Print summary
     let summary = FileSummary {
         total_chunks: chunk_number,
         total_compressed_size,
@@ -198,7 +353,6 @@ fn inspect_file(file_path: &str, output_format: &str, preview: Option<&str>, enc
         average_compression_ratio: total_uncompressed_size as f64 / total_compressed_size as f64,
     };
 
-    // Print summary
     if output_format == "json" {
         println!("{}", serde_json::to_string(&summary)?);
     } else {
@@ -510,6 +664,26 @@ fn read_chunk<R: Read + Seek>(reader: &mut R, offset: u64, chunk_number: usize) 
         Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, 
             format!("Decompression error at offset {}: {}", offset, e)))
     }
+}
+
+fn count_chunks(file_path: &str) -> io::Result<usize> {
+    let file = File::open(file_path)?;
+    let mut reader = BufReader::new(file);
+    let mut offset = 0;
+    let mut count = 0;
+
+    loop {
+        match read_chunk(&mut reader, offset, count) {
+            Ok(info) => {
+                offset += info.compressed_size;
+                count += 1;
+            }
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e),
+        }
+    }
+
+    Ok(count)
 }
 
 fn find_gzip_header(buffer: &[u8]) -> Option<usize> {
