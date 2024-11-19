@@ -2,6 +2,16 @@
 
 A robust command-line tool for inspecting and analyzing GZIP/ZLIB compressed files. GZInspector provides detailed information about compression chunks, headers, and content previews with support for both human-readable and JSON output formats.
 
+## Motivation
+
+Most GZIP implementations discard chunk boundaries during decompression since they're typically irrelevant for the decompressed output. However, certain file formats leverage GZIP chunks as a core feature, allowing selective decompression of individual chunks when their byte offsets and lengths are known.
+
+This chunked compression approach is particularly prevalent in web archiving formats, including:
+- [WARC, WET, WAT](https://commoncrawl.org/blog/web-archiving-file-formats-explained) files used by web archives to store crawled content
+- [CDX/J and ZipNum encoded CDX](https://commoncrawl.org/blog/announcing-the-common-crawl-index) files that enable efficient index lookups 
+
+These formats are actively used by major web archiving initiatives like [CommonCrawl](https://commoncrawl.org/) and the [Internet Archive](https://archive.org/) to manage and provide access to petabyte-scale web archives.
+
 ## Features
 
 - 📦 Chunk-by-chunk analysis of GZIP files
@@ -13,6 +23,10 @@ A robust command-line tool for inspecting and analyzing GZIP/ZLIB compressed fil
 - 🔄 Automatic encoding detection and handling
 
 ## Installation
+
+### Using Rust Cargo
+
+```cargo install gzinspector```
 
 ### Pre-built Binary (Linux)
 
