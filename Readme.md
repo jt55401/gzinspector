@@ -154,3 +154,7 @@ Jason Grey (jason@jason-grey.com)
   - Basic GZIP file inspection
   - Human-readable and JSON output formats
   - Content preview functionality
+
+- 0.2.0: Chunks release
+  - Ability to show first N and last N chunks of the file
+  - Shows progress bar during tail scan of large files
