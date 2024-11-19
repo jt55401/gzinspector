@@ -1,5 +1,5 @@
 [package]
-name = "gz_inspector"
+name = "gzinspector"
 version = "0.2.0"
 edition = "2021"
 authors = ["Jason Grey <jason@jason-grey.com>"]

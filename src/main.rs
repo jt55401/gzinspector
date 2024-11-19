@@ -2,7 +2,7 @@ use clap::{value_parser, Arg, Command};
 use std::fs::File;
 use std::io::{self, BufReader};
 use indicatif::{ProgressBar, ProgressStyle};
-use gz_inspector::*;
+use gzinspector::*;
 
 fn main() {
     let matches = Command::new("gz_inspector")
