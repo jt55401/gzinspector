@@ -133,18 +133,6 @@ impl ChunkFilterSettings {
             }
         })
     }
-
-    fn should_print_chunk(&self, chunk_num: usize, total_chunks: usize) -> bool {
-        if chunk_num < self.head_chunks {
-            return true;
-        }
-        if let Some(tail) = self.tail_chunks {
-            if chunk_num >= total_chunks.saturating_sub(tail) {
-                return true;
-            }
-        }
-        false
-    }
 }
 
 struct TailBuffer {
@@ -362,7 +350,7 @@ fn inspect_file(
     Ok(())
 }
 
-fn print_preview(data: &[u8], settings: &PreviewSettings, encoding: &str) {
+fn print_preview(data: &[u8], settings: &PreviewSettings, _encoding: &str) {
     let text = String::from_utf8_lossy(data).into_owned();
     let lines: Vec<&str> = text.lines().collect();
     
@@ -386,16 +374,6 @@ fn print_preview(data: &[u8], settings: &PreviewSettings, encoding: &str) {
 }
 
 const GZIP_HEADER_SIZE: usize = 10;  // Standard GZIP header size
-const GZIP_FOOTER_SIZE: usize = 8;   // CRC32 (4 bytes) + ISIZE (4 bytes)
-const CRC32_SIZE: usize = 4;
-const ISIZE_SIZE: usize = 4;
-
-#[derive(Debug)]
-struct GzipValidationError {
-    claimed_size: u64,
-    actual_size: u64,
-    error_type: &'static str,
-}
 
 fn parse_gzip_header(header: &[u8], reader: &mut impl Read) -> io::Result<GzipHeaderInfo> {
     let mut flags = Vec::new();
@@ -498,65 +476,6 @@ fn parse_gzip_header(header: &[u8], reader: &mut impl Read) -> io::Result<GzipHe
         filename,
         comment,
     })
-}
-
-fn validate_gzip_chunk(data: &[u8]) -> io::Result<(usize, u32)> {
-    if data.len() < GZIP_HEADER_SIZE + GZIP_FOOTER_SIZE {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Chunk too small"));
-    }
-
-    // Check header magic
-    if data[0] != 0x1f || data[1] != 0x8b {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid header magic"));
-    }
-
-    // Get the stored values from footer
-    let footer_start = data.len() - GZIP_FOOTER_SIZE;
-    let stored_crc32 = u32::from_le_bytes(data[footer_start..footer_start + 4].try_into().unwrap());
-    let stored_size = u32::from_le_bytes(data[footer_start + 4..].try_into().unwrap());
-
-    Ok((stored_size as usize, stored_crc32))
-}
-
-fn validate_member(data: &[u8]) -> bool {
-    if data.len() < GZIP_HEADER_SIZE + GZIP_FOOTER_SIZE {
-        return false;
-    }
-    
-    // Check header magic
-    if data[0] != 0x1f || data[1] != 0x8b || data[2] != 0x08 {
-        return false;
-    }
-    
-    // Try quick decompression to validate
-    let mut decoder = GzDecoder::new(data);
-    let mut buf = Vec::new();
-    decoder.read_to_end(&mut buf).is_ok()
-}
-
-fn is_complete_gzip_member(data: &[u8], is_final: bool) -> bool {
-    if data.len() < GZIP_HEADER_SIZE + GZIP_FOOTER_SIZE {
-        return false;
-    }
-
-    // Check magic numbers and compression method
-    if data[0] != 0x1f || data[1] != 0x8b || data[2] != 0x08 {
-        return false;
-    }
-
-    // For non-final chunks, be strict about validation
-    if !is_final {
-        let footer_start = data.len() - GZIP_FOOTER_SIZE;
-        let stored_size = u32::from_le_bytes(data[footer_start + 4..].try_into().unwrap());
-        let mut decoder = GzDecoder::new(data);
-        let mut buf = Vec::with_capacity(stored_size as usize);
-        return decoder.read_to_end(&mut buf).is_ok()
-    }
-
-    // For final chunk, just try to decompress what we have
-    let mut decoder = GzDecoder::new(data);
-    let mut buf = Vec::new();
-    decoder.read_to_end(&mut buf).is_ok()
 }
 
 fn read_chunk<R: Read + Seek>(reader: &mut R, offset: u64, chunk_number: usize) -> io::Result<ChunkInfo> {
@@ -664,33 +583,4 @@ fn read_chunk<R: Read + Seek>(reader: &mut R, offset: u64, chunk_number: usize) 
         Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, 
             format!("Decompression error at offset {}: {}", offset, e)))
     }
-}
-
-fn count_chunks(file_path: &str) -> io::Result<usize> {
-    let file = File::open(file_path)?;
-    let mut reader = BufReader::new(file);
-    let mut offset = 0;
-    let mut count = 0;
-
-    loop {
-        match read_chunk(&mut reader, offset, count) {
-            Ok(info) => {
-                offset += info.compressed_size;
-                count += 1;
-            }
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-            Err(e) => return Err(e),
-        }
-    }
-
-    Ok(count)
-}
-
-fn find_gzip_header(buffer: &[u8]) -> Option<usize> {
-    for i in 0..buffer.len() - 1 {
-        if buffer[i] == 0x1f && buffer[i + 1] == 0x8b {
-            return Some(i);
-        }
-    }
-    None
 }
