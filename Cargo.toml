@@ -5,6 +5,7 @@ edition = "2021"
 authors = ["Jason Grey <jason@jason-grey.com>"]
 description = "A tool to inspect gzip/zlib compressed files (especially chunked textual files such as WARC, WET, WAT, CDX, ZipNum, etc.)"
 license = "MIT"
+repository = "https://github.com/jt55401/gzinspector"
 
 [dependencies]
 clap = "4.0"
