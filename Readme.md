@@ -59,6 +59,7 @@ gzinspector [OPTIONS] <FILE>
 
 - `-o, --output-format <FORMAT>`: Output format (human or json) [default: human]
 - `-p, --preview <PREVIEW>`: Preview content (format: HEAD:TAIL, e.g. '5:3' shows first 5 and last 3 lines)
+- `-c, --chunks <CHUNKS>`: Only show first and last N chunks (format: HEAD:TAIL, e.g. '5:3' shows first 5 and last 3)
 - `-e, --encoding <ENCODING>`: Encoding for preview [default: utf-8]
 - `-h, --help`: Display help information
 - `-V, --version`: Display version information
